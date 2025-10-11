@@ -1,0 +1,12 @@
+For future reference:
+
+Following are the two experiments conducted in SEG abstract
+
+Nelson_A_recon-2prim_reflect_train_Fnet_ng32_nd64
+Nelson_A_recon-srmemult2prim-mult_reflect_train_Fnet_ng32_nd64_poorPrediction
+
+
+Following are the two experiments conducted in SEG presentation
+
+Nelson_A_recon-2prim_reflect_train_Fnet_ng32_nd64_divide
+Nelson_A_recon-srmemult2prim-mult_reflect_train_Fnet_ng32_nd64_poorPrediction_divide

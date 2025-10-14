@@ -1,45 +1,41 @@
-# #!/bin/bash -l
+#!/usr/bin/env bash
 
-experiment_name=Nelson_A_recon-srmemult2prim-mult_reflect_train_Fnet_ng32_nd64_poorPrediction/
-repo_name=GOMdata-SRME-GAN
-save_path=/nethome/asiahkoohi3/Desktop/SEG19/multiple_abstract
+set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -d "$SCRIPT_DIR/src" ]; then
+  REPO_ROOT="$SCRIPT_DIR"
+else
+  REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
 
-path_script=/nethome/asiahkoohi3/Desktop/Ali/$repo_name/src
-path_model=/data/aws/$experiment_name
-path_utls=/nethome/asiahkoohi3/Desktop/Ali/$repo_name/local
+path_utils="$REPO_ROOT/local"
+model_root="${MODEL_ROOT:-/data/aws}"
+save_path="${SAVE_PATH:-$REPO_ROOT/local/output_abstract}"
 
-mkdir $save_path/
-mkdir $save_path/$experiment_name
-mkdir $save_path/$experiment_name/exp-1
-mkdir $save_path/$experiment_name/exp-2
+mkdir -p "$save_path"
 
+run_experiment() {
+  local experiment_name="$1"
+  local exp_label="$2"
+  local test_num="$3"
 
-python $path_utls/showMappping_abstract.py --hdf5path $path_model/sample --test_num 110 --save_dir $save_path/$experiment_name --exp exp-2
+  local path_model="$model_root/$experiment_name"
+  mkdir -p "$save_path/$experiment_name/$exp_label"
 
+  python "$path_utils/showMappping_abstract.py" \
+    --hdf5path "$path_model/sample" \
+    --test_num "$test_num" \
+    --save_dir "$save_path/$experiment_name" \
+    --exp "$exp_label"
+}
 
-# command="$path_script/main.py --dataset_dir=dispersion --phase train --which_direction BtoA --batch_size 1 --continue_train True --checkpoint_dir $path_model/checkpoint --sample_dir $path_model/sample --log_dir $path_model/log"
+run_experiment \
+  "Nelson_A_recon-srmemult2prim-mult_reflect_train_Fnet_ng32_nd64_poorPrediction" \
+  "exp-2" \
+  110
 
-# if python $command ; then
-#     echo "Command succeeded"
-#     rm -rf path_script=/home/ec2-user/scripts/$experiment_name
-# else
-#     echo "Command failed"
-# fi
-
-
-# #!/bin/bash -l
-
-experiment_name=Nelson_A_recon-2prim_reflect_train_Fnet_ng32_nd64
-repo_name=GOMdata-SRME-GAN
-
-path_script=/nethome/asiahkoohi3/Desktop/Ali/$repo_name/src
-path_model=/data/aws/$experiment_name
-path_utls=/nethome/asiahkoohi3/Desktop/Ali/$repo_name/local
-
-mkdir $save_path/$experiment_name
-mkdir $save_path/$experiment_name/exp-1
-mkdir $save_path/$experiment_name/exp-2
-
-
-python $path_utls/showMappping_abstract.py --hdf5path $path_model/sample --test_num 110 --save_dir $save_path/$experiment_name --exp exp-1
+run_experiment \
+  "Nelson_A_recon-2prim_reflect_train_Fnet_ng32_nd64" \
+  "exp-1" \
+  110

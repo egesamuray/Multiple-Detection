@@ -1,23 +1,19 @@
-# #!/bin/bash -l
+#!/usr/bin/env bash
 
-experiment_name=GOMshot_MultipleElimination-inter-mult-2T2_Fnet_ng32_nd64
-repo_name=GOMdata-SRME-GAN
+set -euo pipefail
 
-path_script=/nethome/asiahkoohi3/Desktop/Ali/$repo_name/src
-path_data=/data/NelsonData/trainingData
-path_model=$path_script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -d "$SCRIPT_DIR/src" ]; then
+  REPO_ROOT="$SCRIPT_DIR"
+else
+  REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
 
-python $path_script/main.py --dataset_dir=multiple --phase train --transfer 0 \
---epoch 400 --epoch_step 50 --batch_size 1 --save_freq 3000  --print_freq 50 --continue_train True \
---checkpoint_dir $path_model/checkpoint --sample_dir $path_model/sample --log_dir $path_model/log \
---use_resnet 2 --input_nc 1 --output_nc 1 --ngf 32 --L1_lambda 1500.0 --data_path $path_data
+path_script="$REPO_ROOT/src"
+path_data="${DATA_PATH:-/data/NelsonData/trainingData}"
+path_model="$path_script"
 
-
-# command="$path_script/main.py --dataset_dir=dispersion --phase train --which_direction BtoA --batch_size 1 --continue_train True --checkpoint_dir $path_model/checkpoint --sample_dir $path_model/sample --log_dir $path_model/log"
-
-# if python $command ; then
-#     echo "Command succeeded"
-#     rm -rf path_script=/home/ec2-user/scripts/$experiment_name
-# else
-#     echo "Command failed"
-# fi
+python "$path_script/main.py" --dataset_dir=multiple --phase train --transfer 0 \
+  --epoch 400 --epoch_step 50 --batch_size 1 --save_freq 3000 --print_freq 50 --continue_train True \
+  --checkpoint_dir "$path_model/checkpoint" --sample_dir "$path_model/sample" --log_dir "$path_model/log" \
+  --use_resnet 2 --input_nc 1 --output_nc 1 --ngf 32 --L1_lambda 1500.0 --data_path "$path_data"

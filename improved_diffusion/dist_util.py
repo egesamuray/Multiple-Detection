@@ -1,94 +1,85 @@
-"""
-Helpers for distributed training.
-"""
-
-import io
+# improved_diffusion/dist_util.py
 import os
-import socket
-
-import blobfile as bf
-from mpi4py import MPI
-import torch as th
+import torch
 import torch.distributed as dist
-from . import logger
 
-# Change this to reflect your cluster layout.
-# The GPU for a given rank is (rank % GPUS_PER_NODE).
-GPUS_PER_NODE = 4
-
-SETUP_RETRY_COUNT = 3
-
+_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+_INITIALIZED = False
 
 def setup_dist():
     """
-    Setup a distributed process group.
+    Best-effort distributed init. If env vars for torchrun/accelerate are absent,
+    we just run single-process, single-GPU.
     """
-    if dist.is_initialized():
+    global _DEVICE, _INITIALIZED
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    if torch.cuda.is_available():
+        try:
+            torch.cuda.set_device(local_rank)
+            _DEVICE = torch.device(f"cuda:{local_rank}")
+        except Exception:
+            _DEVICE = torch.device("cuda")
+    else:
+        _DEVICE = torch.device("cpu")
+
+    # Try to init torch.distributed only if env hints are present.
+    if not dist.is_available() or dist.is_initialized():
+        _INITIALIZED = True
         return
 
-    comm = MPI.COMM_WORLD
-    backend = "gloo" if not th.cuda.is_available() else "nccl"
+    world_size = os.environ.get("WORLD_SIZE")
+    rank = os.environ.get("RANK")
+    master_addr = os.environ.get("MASTER_ADDR")
+    master_port = os.environ.get("MASTER_PORT")
 
-    if backend == "gloo":
-        hostname = "localhost"
-    else:
-        hostname = socket.gethostbyname(socket.getfqdn())
-    os.environ["MASTER_ADDR"] = comm.bcast(hostname, root=0)
-    os.environ["RANK"] = str(comm.rank)
-    os.environ["WORLD_SIZE"] = str(comm.size)
+    if world_size and rank and master_addr and master_port:
+        backend = "nccl" if torch.cuda.is_available() else "gloo"
+        try:
+            dist.init_process_group(backend=backend, init_method="env://")
+        except Exception:
+            pass
 
-    port = comm.bcast(_find_free_port(), root=0)
-    os.environ["MASTER_PORT"] = str(port)
-    dist.init_process_group(backend=backend, init_method="env://")
-
+    _INITIALIZED = True
 
 def dev():
-    """
-    Get the device to use for torch.distributed.
-    """
-    if th.cuda.is_available():
-        return th.device(f"cuda:{MPI.COMM_WORLD.Get_rank() % GPUS_PER_NODE}")
-    return th.device("cpu")
+    return _DEVICE
 
+def using_distributed():
+    return dist.is_available() and dist.is_initialized()
 
-def load_state_dict(path, **kwargs):
-    """
-    Load a PyTorch file without redundant fetches across MPI ranks.
-    """
-    if MPI.COMM_WORLD.Get_rank() == 0:
-        # Handle missing files by grabbing most recent model instead.
-        # File name format is whatever_step.pt
-        prefix, step = path.rsplit('_', maxsplit=1)
-        step = int(step[:-len(".pt")])
-        get_name = lambda step: f"{prefix}_{step:06d}.pt"
-        while step >= 0 and not os.path.exists(get_name(step)):
-            step -= 10000
-        if step < 0:
-            raise ValueError(f"Did not find any model for {path}")
-        logger.info(f"Use model step {step} for {path}")
+def get_world_size():
+    if using_distributed():
+        try: return dist.get_world_size()
+        except Exception: return 1
+    return 1
 
-        with bf.BlobFile(get_name(step), "rb") as f:
-            data = f.read()
-    else:
-        data = None
-    data = MPI.COMM_WORLD.bcast(data)
-    return th.load(io.BytesIO(data), **kwargs)
+def get_rank():
+    if using_distributed():
+        try: return dist.get_rank()
+        except Exception: return 0
+    return 0
 
+def is_master():
+    return get_rank() == 0
 
+def synchronize():
+    if using_distributed():
+        try: dist.barrier()
+        except Exception: pass
+
+@torch.no_grad()
 def sync_params(params):
-    """
-    Synchronize a sequence of Tensors across ranks from rank 0.
-    """
-    for p in params:
-        with th.no_grad():
-            dist.broadcast(p, 0)
+    # No-op for single process; broadcast from rank 0 if distributed.
+    if using_distributed():
+        for p in params:
+            dist.broadcast(p.data, src=0)
 
+@torch.no_grad()
+def all_reduce(tensor, op=dist.ReduceOp.SUM):
+    if using_distributed():
+        dist.all_reduce(tensor, op=op)
+    return tensor
 
-def _find_free_port():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.bind(("", 0))
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        return s.getsockname()[1]
-    finally:
-        s.close()
+def broadcast(obj, src=0):
+    # Simple object broadcast (single-process fallback).
+    return obj

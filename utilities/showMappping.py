@@ -1,8 +1,11 @@
-import numpy as np
+import argparse
+import os
+import warnings
+
 import h5py
 import matplotlib.pyplot as plt
-import os
-import argparse
+import numpy as np
+
 np.random.seed(seed=19)
 
 parser = argparse.ArgumentParser(description='')
@@ -25,6 +28,20 @@ fileName = h5py.File(strName, 'r')
 data_num = fileName[dataset_name].shape[0]
 data_numA = fileName[dataset_name + 'A'].shape[0]
 data_numB = fileName[dataset_name + 'B'].shape[0]
+
+if data_num == 0:
+    raise ValueError('Dataset "{0}" in {1} is empty.'.format(dataset_name, hdf5name))
+
+if test_num < 0 or test_num >= data_num:
+    new_index = test_num % data_num
+    warnings.warn(
+        'Requested test_num {0} is outside the available range [0, {1}). '
+        'Wrapping it to {2}.'.format(test_num, data_num, new_index)
+    )
+    test_num = new_index
+
+if not (data_num == data_numA == data_numB):
+    raise ValueError('Inconsistent dataset sizes found in {0}.'.format(hdf5name))
 
 data_train = fileName[dataset_name][...]
 data_trainA = fileName[dataset_name + 'A']

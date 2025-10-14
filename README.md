@@ -1,118 +1,53 @@
-# MultipleEliminationGAN 
+# Wavelet and Curvelet Score-Based Generative Models
 
-This repository contains codes for reading the GOM dataset, generating training and testing dataset, and training a GAN to remove multiples.
+This repository contains the codebase for training and sampling from both wavelet-based and curvelet-based Score-Based Generative Models. It extends the original diffusion model implementation from OpenAI’s **improved-diffusion** repository:contentReference[oaicite:6]{index=6} (see LICENSE) to use multi-scale wavelet or curvelet representations of images.
 
-## Prerequisites
+## Installation
 
-* SeismicUnix
-
-* TensorFlow
-
-* `h5py`
-
-* `SeisIO`
-
-### Installation
-
-* Install TensorFlow from https://github.com/JohnWStockwellJr/SeisUnix
-
-* Install TensorFlow from https://github.com/tensorflow/tensorflow
-
-* Install `h5py` with `pip instal h5py`
-
-* Install `SeisIO` from https://github.com/slimgroup/SeisIO.jl
-
-
-
-## Script descriptions
-
-
-`utilities/SU2segy.sh`\: It inputs the GOM data in `su` format and saves it in `segy`\.
-
-`utilities/segy2HDF5.jl`\: It inputs the GOM data in `su` format and saves it in `hsf5`\.
-
-`utilities/VizData.py`\: It inputs the GOM data in `hdf5` format and provides tools to visualize the data
-
-`utilities/genDataset.py`\: It inputs the GOM data in `hdf5` format and generates training and testing dataset for training a GAN
-
-`RunTraining.sh`\: Script for running training on `AWS` cloud. Currently needs permission to access my Dropbox account with `rclone` for downloading the training and testing data set into the `AWS` instance.
-
-`RunTesting.sh`\: Script for testing the trained network on `AWS` cloud and saving the result of the mapping in `hdf5` format. Currently needs permission to access my Dropbox account with `rclone` to upload the results.
-
-`src/main.py`\: The main function to run the training on any machine. The name of training and testing data sets need to be specified in `src/model.py`\.
-
-`show_map.py`\: Plots the interpolated frequency slice after testing stage.
-
-
-    .
-    ├── info                    # Information regrding to the structure of the raw .su GOM dataset
-	|
-    ├── src                     # scripts for training a GAN
-    |
-    ├── utilities               # scripts for reading/visualizing the GOM dataset and generating training/testing dataset
-    |
-    └── ...
-
-
-### Running the tests
-
-To change the format of `.su` files into `segy`:
+Clone this repository and navigate into it, then run:
 
 ```bash
-bash utilities/SU2segy.sh
-```
+pip install -e .
+This will install the improved_diffusion Python package that the scripts depend on.
 
-To change the format of `segy` files into `hsf5`:
+Preparing Data
 
-```bash
-julia utilities/segy2HDF5.jl
-```
-To generate training data using the GOM data in `hdf5` format:
+For wavelet models: download the CelebA-HQ dataset (e.g., from this source), then generate wavelet coefficients using:
 
-```bash
-python genDataset.py --data_path /pathToHdf5Dataset
-```
-
-To run training on AWS run the following (needs permission to access my Dropbox via `rclone` to download the data sets from my Dropbox). Result of training will be stored in my Dropbox. Path to data set in Dropbox can be set in `RunTraining.sh` using `path_DropboxData` variable and path to save the checkpoints for training can be set in `path_DropboxAWS` variable.
-
-```bash
-bash RunTraining.sh
-```
-
-To run training on you own machine run the following in `src/` directory. Make sure to enter the name of data sets in `src/model.py`\.
-
-```bash
-# Running in CPU
-python main.py --data_path /pathToDataset  --dataset_dir=NameOfExperiment --phase train --which_direction BtoA --batch_size 1 --continue_train True
-
-# Running in GPU
-CUDA_VISIBLE_DEVICES=0 python main.py --data_path /pathToDataset  --dataset_dir=NameOfExperiment --phase train --which_direction BtoA --batch_size 1 --continue_train True
-```
-
-To run the trained network on test data set on `AWS`\:
-
-```bash
-bash RunTesting.sh
-```
-
-To run the trained network on test data set on you own machine run the following in `src/` directory. Make sure to enter the name of data sets in `src/model.py`\.
-
-```bash
-# Running in CPU
-python main.py --data_path /pathToDataset  --dataset_dir=NameOfExperiment --phase test --which_direction BtoA --batch_size 1 --continue_train True
-
-# Running in GPU
-CUDA_VISIBLE_DEVICES=0 python main.py --data_path /pathToDataset  --dataset_dir=NameOfExperiment --phase test --which_direction BtoA --batch_size 1 --continue_train True
-```
+python improved_diffusion/wavelet_datasets.py --image-dir /path/to/celeba_hq \
+    --wav-dir /path/to/wavelet/output --J NUMBER_OF_SCALES \
+    --border-condition periodization --wavelet haar
 
 
-To show the result after performing the testing stage run the following:
+For curvelet models: no precomputation is required. The dataset images are used directly, and curvelet coefficients are computed on-the-fly by the data loader.
 
-```bash
-python show_map.py
-```
+Training and Sampling
+
+You can use the run_exps.py script to train and sample models. For example, to train curvelet-based models, run:
+
+python run_exps.py --task curvelet --data_dir /path/to/celeba_hq --j 1 --final_size 64
 
 
-## Author
+This will train two models for scale j=1 (finest scale) at 64×64 resolution: an unconditional coarse model and a conditional high-frequency (wedge) model. Training logs and checkpoints are saved to a logs/ directory by default. (The script uses MPI with 4 GPUs by default – you may adapt the commands or run on a single GPU by omitting MPI.)
 
-Ali Siahkoohi
+After training, you can generate samples using the unified sampling script:
+
+python scripts/curvelet_generate.py --data_dir /path/to/celeba_hq \
+    --coarse_model logs/.../coarse_model.pt --cond_model logs/.../cond_model.pt \
+    --j 1 --image_size 64 --num_samples 30000 --output_dir samples_j1
+
+
+This will first sample low-frequency coarse images from the coarse model, then sample high-frequency details from the conditional model, and finally combine them using the inverse curvelet transform to produce 30,000 full 64×64 images (saved in samples_j1). Adjust --j, --image_size, and the model paths as needed for your experiment. You can also specify --angles_per_scale if you used a non-default wedge configuration during training.
+
+For wavelet models, the process is similar (use --task wavelet in run_exps.py). After training, use the corresponding wavelet sampling script or run_exps.py to generate samples.
+
+FID Computation
+
+Once all models have been trained and you have generated a set of samples (e.g., 30,000 samples for each setting), you can compute the Fréchet Inception Distance (FID) scores. For wavelet models, use:
+
+python get_fid.py
+
+
+(This script will look for generated samples in the default output locations. If different, provide the correct paths inside the script or via arguments.)
+
+For curvelet models, you can similarly compute FIDs by pointing the FID script to the directory of generated curvelet samples.

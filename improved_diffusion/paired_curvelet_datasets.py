@@ -9,7 +9,6 @@ from torch.utils.data import Dataset, DataLoader
 from .curvelet_ops import fdct2, pack_highfreq
 
 try:
-    # WSGM_to_CFM provides this
     from .curvelet_datasets import _angles_parse
 except Exception:
     def _angles_parse(x):
@@ -18,19 +17,36 @@ except Exception:
         return list(x)
 
 def _to_tensor_1ch(arr: np.ndarray, image_size: Optional[int]) -> torch.Tensor:
-    arr = np.asarray(arr, dtype=np.float32)
-    vmin, vmax = float(arr.min()), float(arr.max())
-    if vmax > vmin:
-        arr = (arr - vmin) / (vmax - min(vmax, vmin + 1e9))  # safe
-        arr = (arr - arr.min()) / (arr.max() - arr.min() + 1e-12)
+    """
+    Robustly scale to [-1, 1] with percentile clipping; NaN/Inf-safe.
+    """
+    a = np.asarray(arr, dtype=np.float32)
+    a = np.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Percentile-based window to avoid outliers; fallback to min-max.
+    try:
+        p1, p99 = np.percentile(a, [1.0, 99.0])
+    except Exception:
+        p1, p99 = float(a.min()), float(a.max())
+
+    if not np.isfinite(p1) or not np.isfinite(p99) or (p99 - p1) < 1e-6:
+        lo, hi = float(a.min()), float(a.max())
+        if (hi - lo) < 1e-6:
+            x = np.zeros_like(a, dtype=np.float32)
+        else:
+            x = (a - lo) / (hi - lo)
     else:
-        arr = np.zeros_like(arr, dtype=np.float32)
-    arr = 2.0 * arr - 1.0  # [-1,1]
-    x = torch.from_numpy(arr)[None, :, :]  # (1,H,W)
-    if image_size is not None and (x.shape[-2] != image_size or x.shape[-1] != image_size):
-        x = F.interpolate(x.unsqueeze(0), size=(image_size, image_size),
+        x = (a - p1) / (p99 - p1)
+        x = np.clip(x, 0.0, 1.0)
+
+    x = 2.0 * x - 1.0
+    x = np.clip(x, -1.0, 1.0).astype(np.float32)
+
+    t = torch.from_numpy(x)[None, :, :]  # (1,H,W)
+    if image_size is not None and (t.shape[-2] != image_size or t.shape[-1] != image_size):
+        t = F.interpolate(t.unsqueeze(0), size=(image_size, image_size),
                           mode="bilinear", align_corners=False).squeeze(0)
-    return x
+    return t
 
 class PairedCurveletH5(Dataset):
     """

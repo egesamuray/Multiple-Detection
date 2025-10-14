@@ -1,9 +1,7 @@
-# scripts/image_train.py
-"""
-Train a diffusion model on images.
-"""
+# scripts/image_train.py  (FULL FILE with paired-HDF5 support)
 import argparse
 import json
+import os
 
 from improved_diffusion import dist_util, logger
 from improved_diffusion.image_datasets import load_data
@@ -16,7 +14,9 @@ from improved_diffusion.script_util import (
 )
 from improved_diffusion.train_util import TrainLoop
 from improved_diffusion.curvelet_datasets import load_data_curvelet
-
+from improved_diffusion.paired_curvelet_datasets import load_data_curvelet_paired_h5
+import numpy as np
+import torch
 
 def main():
     args = create_argparser().parse_args()
@@ -41,15 +41,35 @@ def main():
     elif args.task == "wavelet":
         data = load_data_wavelet(args.data_dir, args.batch_size, args.j, args.conditional)
     elif args.task == "curvelet":
-        data = load_data_curvelet(
-            data_dir=args.data_dir,
-            batch_size=args.batch_size,
-            j=args.j,
-            conditional=args.conditional,
-            angles_per_scale=args.angles_per_scale,
-            image_size=args.large_size,
-            color_channels=args.color_channels,
-        )
+        if bool(args.paired):
+            # optional stats for whitening wedges (recommended)
+            stats = None
+            if args.stats_npz and os.path.isfile(args.stats_npz):
+                z = np.load(args.stats_npz)
+                stats = (torch.from_numpy(z["mean"]).float(), torch.from_numpy(z["std"]).float())
+            data = load_data_curvelet_paired_h5(
+                h5_path=args.h5_path,
+                input_key=args.input_key,
+                target_key=args.target_key,
+                batch_size=args.batch_size,
+                j=args.j,
+                image_size=args.large_size,
+                angles_per_scale=args.angles_per_scale,
+                stats=stats,
+                deterministic=False,
+                num_workers=0,
+                limit=args.limit if args.limit and int(args.limit) > 0 else None,
+            )
+        else:
+            data = load_data_curvelet(
+                data_dir=args.data_dir,
+                batch_size=args.batch_size,
+                j=args.j,
+                conditional=args.conditional,
+                angles_per_scale=args.angles_per_scale,
+                image_size=args.large_size,
+                color_channels=args.color_channels,
+            )
     else:
         raise ValueError("unsupported task")
 
@@ -73,7 +93,6 @@ def main():
         max_training_steps=args.max_training_steps,
     ).run_loop()
 
-
 def create_argparser():
     defaults = dict(
         task="standard",
@@ -91,12 +110,18 @@ def create_argparser():
         resume_checkpoint="",
         use_fp16=False,
         fp16_scale_growth=1e-3,
+        # Paired HDF5 options:
+        paired=False,
+        h5_path="",
+        input_key="srmemult",
+        target_key="prim",
+        stats_npz="",
+        limit=-1,
     )
     defaults.update(model_and_diffusion_defaults(task=defaults["task"]))
     parser = argparse.ArgumentParser()
     add_dict_to_argparser(parser, defaults)
     return parser
-
 
 if __name__ == "__main__":
     main()

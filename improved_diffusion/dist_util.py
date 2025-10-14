@@ -7,10 +7,7 @@ _DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 _INITIALIZED = False
 
 def setup_dist():
-    """
-    Best-effort distributed init. If env vars for torchrun/accelerate are absent,
-    we just run single-process, single-GPU.
-    """
+    """Best-effort init. If env vars absent, run single-proc/single-GPU."""
     global _DEVICE, _INITIALIZED
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     if torch.cuda.is_available():
@@ -22,7 +19,6 @@ def setup_dist():
     else:
         _DEVICE = torch.device("cpu")
 
-    # Try to init torch.distributed only if env hints are present.
     if not dist.is_available() or dist.is_initialized():
         _INITIALIZED = True
         return
@@ -38,7 +34,6 @@ def setup_dist():
             dist.init_process_group(backend=backend, init_method="env://")
         except Exception:
             pass
-
     _INITIALIZED = True
 
 def dev():
@@ -67,9 +62,12 @@ def synchronize():
         try: dist.barrier()
         except Exception: pass
 
+# alias so legacy code calling dist.barrier() still works
+def barrier():
+    synchronize()
+
 @torch.no_grad()
 def sync_params(params):
-    # No-op for single process; broadcast from rank 0 if distributed.
     if using_distributed():
         for p in params:
             dist.broadcast(p.data, src=0)
@@ -81,5 +79,4 @@ def all_reduce(tensor, op=dist.ReduceOp.SUM):
     return tensor
 
 def broadcast(obj, src=0):
-    # Simple object broadcast (single-process fallback).
     return obj

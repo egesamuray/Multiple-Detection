@@ -2,16 +2,33 @@
 import os, sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import os, argparse, h5py, numpy as np, torch, torch.nn.functional as F
+import glob, argparse, h5py, numpy as np, torch, torch.nn.functional as F
 from improved_diffusion import script_util, curvelet_ops
 from improved_diffusion.paired_curvelet_datasets import _angles_parse, _to_tensor_1ch
+
+def _resolve_ckpt(path_like: str) -> str:
+    """Return an existing .pt file. If a dir is passed, pick the last *.pt."""
+    if os.path.isfile(path_like):
+        return path_like
+    if os.path.isdir(path_like):
+        cands = sorted(glob.glob(os.path.join(path_like, "*.pt")))
+        if not cands:
+            raise FileNotFoundError(f"No .pt files in directory: {path_like}")
+        return cands[-1]
+    # maybe user passed a non-existing file; try its directory
+    d = os.path.dirname(path_like) or "."
+    patt = os.path.basename(path_like)
+    cands = sorted(glob.glob(os.path.join(d, patt if patt else "*.pt")))
+    if not cands:
+        raise FileNotFoundError(f"Checkpoint not found: {path_like}")
+    return cands[-1]
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--h5_path", required=True)
     ap.add_argument("--input_key", default="srmemult")
     ap.add_argument("--out_h5", required=True)
-    ap.add_argument("--cond_model_path", required=True)
+    ap.add_argument("--cond_model_path", required=True, help="Path to .pt OR a directory containing checkpoints")
     ap.add_argument("--stats_npz", required=True)
     ap.add_argument("--j", type=int, default=1)
     ap.add_argument("--angles_per_scale", type=str, default="8,16,32,32")
@@ -36,10 +53,12 @@ def main():
         task="curvelet",
         **script_util.args_to_dict(argparse.Namespace(**params), params.keys())
     )
-    model.load_state_dict(torch.load(args.cond_model_path, map_location="cpu"))
+
+    ckpt = _resolve_ckpt(args.cond_model_path)
+    print("Using checkpoint:", ckpt)
+    model.load_state_dict(torch.load(ckpt, map_location="cpu"))
     model.to(device).eval()
 
-    # Load overall stats; we’ll take wedge portion dynamically based on Wj
     z = np.load(args.stats_npz)
     mean_all = torch.from_numpy(z["mean"]).float().to(device)
     std_all  = torch.from_numpy(z["std"]).float().clamp_min(1e-6).to(device)
@@ -56,16 +75,16 @@ def main():
             out = f_out.create_dataset("pred", shape=(end - start, H, W), dtype="float32")
 
             for idx in range(start, end):
-                arr = dset[idx]  # (H,W)
+                arr = dset[idx]
                 x = _to_tensor_1ch(arr, args.large_size).unsqueeze(0).to(device)  # (1,1,S,S)
 
                 coeffs = curvelet_ops.fdct2(x, J=(len(angles) if angles else max(args.j,3)), angles_per_scale=angles)
-                coarse = coeffs["coarse"]                                  # (1,1,Hc,Wc)
+                coarse = coeffs["coarse"]
                 packed_dummy = curvelet_ops.pack_highfreq(coeffs, args.j)   # (1, C*Wj, Nj,Nj)
                 if coarse.shape[-2:] != packed_dummy.shape[-2:]:
                     coarse = F.interpolate(coarse, size=packed_dummy.shape[-2:], mode="bilinear", align_corners=False)
 
-                cond_in = coarse  # NOT whitened (matches training)
+                cond_in = coarse  # NOT whitened
                 Wj = packed_dummy.shape[1] // C
                 wedge_mean  = mean_all[C : C + C*Wj].view(1, C*Wj, 1, 1)
                 wedge_std   = std_all [C : C + C*Wj].view(1, C*Wj, 1, 1)
@@ -78,7 +97,7 @@ def main():
                 wedges_list = curvelet_ops.unpack_highfreq(
                     wedges, j=args.j, meta={"angles_per_scale": angles or [], "color_channels": C}
                 )
-                recon = curvelet_ops.ifdct2({"coarse": coarse, "bands": [wedges_list]}, output_size=args.large_size)  # (1,1,S,S)
+                recon = curvelet_ops.ifdct2({"coarse": coarse, "bands": [wedges_list]}, output_size=args.large_size)
 
                 y = F.interpolate(recon, size=(H, W), mode="bilinear", align_corners=False)
                 out[idx - start] = y[0, 0].clamp(-1, 1).detach().cpu().numpy()

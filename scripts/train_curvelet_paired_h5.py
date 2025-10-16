@@ -13,7 +13,6 @@ def main():
     dist_util.setup_dist()
     os.makedirs(args.logdir, exist_ok=True)
     logger.configure(dir=args.logdir)
-    # save args.json for inference
     with open(os.path.join(args.logdir, "args.json"), "w") as f:
         json.dump(vars(args), f, indent=2, sort_keys=True)
 
